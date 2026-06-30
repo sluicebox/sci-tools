@@ -522,7 +522,7 @@ namespace SCI.Decompile
                                 Write(loop.Test);
                                 Newline();
                                 // for-reinit is a list in sci, and also here too, for rare functions where
-                                // i've proven the start of the reinit.
+                                // i proved the start of the reinit.
                                 Write("(");
                                 if (IsRoomFor(loop.ForReinit))
                                 {

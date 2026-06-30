@@ -271,6 +271,7 @@ namespace SCI.Annotators
             {12, "grUPDATE_BOX"},
             {13, "grREDRAW_BOX"},
             {14, "grADJUST_PRIORITY"},
+            {15, "*grSAVE_BITS_HIGH_RES_KQ6" }, // not in template
         };
 
         static Dictionary<int, string> ListOps = new Dictionary<int, string>

@@ -490,7 +490,6 @@ namespace SCI.Annotators
             var script = game.GetScript(994); // Game script
             if (script == null) return -1;
 
-            int globalNumber = -1;
             foreach (var function in script.GetFunctions())
             {
                 foreach (var node in function.Node)
@@ -498,7 +497,8 @@ namespace SCI.Annotators
                     if (node.At(0).Text == "SaveGame" &&
                         node.At(4) is Atom)
                     {
-                        if (ReadGlobal(game, node.At(4), ref globalNumber))
+                        int globalNumber = ReadGlobal(game, node.At(4));
+                        if (globalNumber != -1)
                         {
                             return globalNumber;
                         }
@@ -507,7 +507,8 @@ namespace SCI.Annotators
                          node.At(0).Text == "RestoreGame") &&
                         node.At(3) is Atom)
                     {
-                        if (ReadGlobal(game, node.At(3), ref globalNumber))
+                        int globalNumber = ReadGlobal(game, node.At(3));
+                        if (globalNumber != -1)
                         {
                             return globalNumber;
                         }
@@ -517,15 +518,14 @@ namespace SCI.Annotators
             return -1;
         }
 
-        static bool ReadGlobal(Game game, Node node, ref int globalNumber)
+        static int ReadGlobal(Game game, Node node)
         {
             var global = game.Globals.Values.FirstOrDefault(g => g.Name == node.Text);
             if (global != null)
             {
-                globalNumber = global.Number;
-                return true;
+                return global.Number;
             }
-            return false;
+            return -1;
         }
     }
 }

@@ -8,7 +8,7 @@ using System.Linq;
 
 namespace SCI.Resource
 {
-    enum MapVersion
+    public enum MapVersion
     {
         Unknown,
         SCI0,
@@ -19,7 +19,7 @@ namespace SCI.Resource
         SCI2
     }
 
-    class MapEntry
+    public class MapEntry
     {
         public byte Type;
         public UInt16 Number;
@@ -32,7 +32,7 @@ namespace SCI.Resource
         }
     }
 
-    class ResourceMap
+    public class ResourceMap
     {
         public string Name;
         public MapVersion Version;

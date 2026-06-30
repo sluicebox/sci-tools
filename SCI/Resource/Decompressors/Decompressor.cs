@@ -1,5 +1,3 @@
-using System;
-
 namespace SCI.Resource.Decompressors
 {
     public enum Compression
@@ -32,19 +30,16 @@ namespace SCI.Resource.Decompressors
                     return LzwDecompressor.Decompress(CompressionFormat.SCI0, source, uncompressedSize);
                 case Compression.Lzw1:
                     return LzwDecompressor.Decompress(CompressionFormat.SCI1, source, uncompressedSize);
+                case Compression.Lzw1View:
+                    return LzwViewPicDeompressor.DecompressView(source, uncompressedSize);
+                case Compression.Lzw1Pic:
+                    return LzwViewPicDeompressor.DecompressPic(source, uncompressedSize);
                 case Compression.DclImplode:
                     return DclImplodeDecompressor.Decompress(source, uncompressedSize);
                 case Compression.StackerLzs:
                    return StackerLzsDecompressor.Decompress(source, uncompressedSize);
-
-                // I haven't implemented Lzw1View or Lzw1Pic because I haven't written
-                // anything that's dealt with parsing SCI1 views or pics yet.
-                // Sierra heavily transformed the two formats before applying LZW
-                // for better compression, so those rather intense parsings and
-                // transformations need to be applied after LZW decompression.
-                default:
-                    throw new NotImplementedException("Compression not implemented: " + compression);
             }
+            return null;
         }
     }
 }

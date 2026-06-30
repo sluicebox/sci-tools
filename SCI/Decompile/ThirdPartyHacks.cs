@@ -218,7 +218,7 @@ namespace SCI.Decompile
             // Early: Loop ends in while condition, bnt to follow, bt to head.  okay?
             // Now:   Loop ends in while condition, bnt to follow, jmp to head. sure!
             //        Unfortunately this last sequence can also occur in a While loop,
-            //        when there just a test but no body. AstBuilder will detect this.
+            //        when there is just a test but no body. AstBuilder will detect this.
             if (loop.Latch.Prev.Operation == Operation.bnt &&
                 loop.Latch.Prev.BranchTarget == loop.Follow.Position)
             {

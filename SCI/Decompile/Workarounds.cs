@@ -111,7 +111,7 @@ namespace SCI.Decompile
             // Find three consecutive jmps; the middle one is the Continue.
             // Also, the bnt that pointed to this was optimized, so deoptimize it.
             // Weirdly, the bnt is only optimized in SCI2 (Torin, LSL7-Mac).
-            // The SCI3 compiler didn't deoptimize it. Huh.
+            // The SCI3 compiler didn't optimize it. Huh.
             if (f.Script.Number == 64892 &&
                 f.FullName == "NewHandlerList:handleEvent")
             {

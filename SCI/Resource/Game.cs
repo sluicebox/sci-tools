@@ -419,6 +419,15 @@ namespace SCI.Resource
         }
     }
 
+    public enum ScriptFormat
+    {
+        Unknown,
+        SCI0,
+        SCI11,
+        SCI3,
+        LSCI
+    }
+
     public partial class Script
     {
         public object Source { get; private set; }

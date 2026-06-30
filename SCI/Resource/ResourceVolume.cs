@@ -8,16 +8,17 @@ using System.Linq;
 
 namespace SCI.Resource
 {
-    enum VolumeVersion
+    public enum VolumeVersion
     {
         Unknown,
         SCI0,
         SCI1_Late,
         SCI11,
-        SCI2
+        SCI2,
+        SCI3
     }
 
-    class VolumeEntry
+    public class VolumeEntry
     {
         public byte Type;
         public UInt16 Number;
@@ -32,7 +33,7 @@ namespace SCI.Resource
         }
     }
 
-    class ResourceVolume
+    public class ResourceVolume
     {
         public string Name;
         public VolumeVersion Version;
@@ -42,7 +43,7 @@ namespace SCI.Resource
 
         public override string ToString()
         {
-            return string.Format("Version: {0} Number: {1} Entries: {2}", Version, Number, Entries?.Count);
+            return string.Format("{0} Version: {1} Number: {2} Entries: {3}", Name, Version, Number, Entries?.Count);
         }
 
         public static ResourceVolume Read(ResourceMap map, string fileName, byte number = 0)
@@ -100,6 +101,7 @@ namespace SCI.Resource
             else if (map.Version == MapVersion.SCI2)
             {
                 potentialVersions.Add(VolumeVersion.SCI2);
+                potentialVersions.Add(VolumeVersion.SCI3);
             }
             else
             {
@@ -134,6 +136,15 @@ namespace SCI.Resource
                     Log.Warn("No potential volume versions");
                     return VolumeVersion.Unknown;
                 }
+            }
+
+            // If the only two potential versions left are SCI2 and SCI3, use SCI2.
+            // If compression isn't used then the formats are effectively identical.
+            if (potentialVersions.Count == 2 &&
+                potentialVersions[0] == VolumeVersion.SCI2 &&
+                potentialVersions[1] == VolumeVersion.SCI3)
+            {
+                return VolumeVersion.SCI2;
             }
 
             Log.Warn("Too many potential volume versions: " + string.Join(", ", potentialVersions.Select(v => v.ToString())));
@@ -174,18 +185,29 @@ namespace SCI.Resource
             }
 
             // packed size must be less than unpacked size if compression is set.
+            // * i found one resource that is compressed to a larger size:
+            //   sound 72 in qfg1-amiga-1.134. it doesn't affect detection outcome.
             // packed size must equal unpacked size if compression is zero.
-            // this doesn't apply to SCI3 where the compression value is derived
-            // because the value in the file is garbage bytes, all we can do there
-            // is require packed size to be less than or equal to unpacked size.
-
-            if (volumeEntry.PackedSize >= volumeEntry.UnpackedSize && volumeEntry.Compression != 0)
+            // this doesn't apply to SCI3 where the compression value is not
+            // used by the interpreter, and is set even when compression isn't used.
+            if (version != VolumeVersion.SCI3)
             {
-                return false;
+                if (volumeEntry.PackedSize >= volumeEntry.UnpackedSize && volumeEntry.Compression != 0)
+                {
+                    return false;
+                }
+                if (volumeEntry.PackedSize != volumeEntry.UnpackedSize && volumeEntry.Compression == 0)
+                {
+                    return false;
+                }
             }
-            if (volumeEntry.PackedSize != volumeEntry.UnpackedSize && volumeEntry.Compression == 0)
+            else
             {
-                return false;
+                // SCI3: packed size must be less than or equal to unpacked size
+                if (volumeEntry.PackedSize > volumeEntry.UnpackedSize)
+                {
+                    return false;
+                }
             }
 
             // hacky test to disambiguate SCI1_Late from SCI11.
@@ -210,15 +232,43 @@ namespace SCI.Resource
                 }
             }
 
-            // validate legal compression values. this is scummvm's check.
-            // need to look again at sci companion, it might have more
-            int maxCompression;
-            if (version == VolumeVersion.SCI0) maxCompression = 8; // was 4, LSCI uses 8
-            else if (version != VolumeVersion.SCI2) maxCompression = 20;
-            else maxCompression = 32;
-            if (volumeEntry.Compression > maxCompression)
+            // validate legal compression values
+            if (version == VolumeVersion.SCI0)
             {
-                return false;
+                // SCI0's max is 4, but LSCI uses 8
+                if (volumeEntry.Compression > 8)
+                {
+                    return false;
+                }
+            }
+            else if (version < VolumeVersion.SCI2)
+            {
+                if (volumeEntry.Compression > 20)
+                {
+                    return false;
+                }
+            }
+            else if (version == VolumeVersion.SCI2)
+            {
+                // In SCI2 the only two values are 0 or 32
+                if (volumeEntry.Compression != 0 &&
+                    volumeEntry.Compression != 32)
+                {
+                    return false;
+                }
+            }
+            else if (version == VolumeVersion.SCI3)
+            {
+                // In SCI3 the only two values are 0 or 0x94,
+                // although the interpreter does not use them,
+                // and even uncompressed resources have their
+                // compression field set so it's not useful.
+                byte sci3Compression = (byte)(volumeEntry.Compression & 0xff);
+                if (sci3Compression != 0 &&
+                    sci3Compression != 0x94)
+                {
+                    return false;
+                }
             }
 
             return true;
@@ -280,17 +330,24 @@ namespace SCI.Resource
 
                 // SCI2 vs SCI3:
                 // SCI2: compression = 32 for compressed, 0 for uncompressed.
-                // SCI3: compression = non-zero for compressed, 0 for uncompressed.
-                // Both SCI2 and SCI3 use Stacker LZS for everything, but in SCI3
-                // they stopped testing if compression == 32 and instead treated
-                // it as a bool. The resource tools accepted this invitation and
-                // emitted all kinds of unpredictable non-zero values.
+                // SCI3: compression = "i'm afraid our best days are behind us".
+                // Both SCI2 and SCI3 use Stacker LZS as their only compression.
+                // In SCI3 the compression field is one byte, followed by a
+                // checksum byte. At first that sounds good, except that the
+                // interpreter no longer cares about the compression value and
+                // the tools no longer care about writing anything meaningful.
+                // SCI3 instead assumes compression if the packed and unpacked
+                // values are different. In practice, the SCI3 compression field
+                // is zero or 0x94, but no meaning can be derived from this.
+                // For example, LSL7 MAP.65535 and VOCAB.993 are not compressed
+                // even though compression is set to 0x94 like all the others.
                 case VolumeVersion.SCI2:
+                case VolumeVersion.SCI3:
                     volumeEntry.Type = stream.ReadByte();
                     volumeEntry.Number = stream.ReadUInt16LE();
                     volumeEntry.PackedSize = stream.ReadUInt32LE();
                     volumeEntry.UnpackedSize = stream.ReadUInt32LE();
-                    volumeEntry.Compression = (UInt16)((stream.ReadUInt16LE() == 0) ? 0 : 32);
+                    volumeEntry.Compression = stream.ReadUInt16LE();
                     break;
             }
 

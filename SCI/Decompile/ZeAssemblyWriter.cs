@@ -155,7 +155,7 @@ namespace SCI.Decompile
                         break;
 
                     case Operation.rest:
-                        // print the parameter an an integer.
+                        // print the parameter as an integer.
                         // this is not what companion does, it uses the parameter name,
                         // but that is wrong because when &rest is used as a standalone
                         // keyword, which it is 99.999% of the time, the instruction's

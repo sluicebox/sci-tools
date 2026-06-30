@@ -351,6 +351,8 @@ namespace SCI.Resource
                 // I discovered this and updated ScummVM; seems related
                 // to the GetMessage exception ECO1 Demo has below.
                 // ScummVM tests message resources for version, I hard code.
+                // Although the scripts included with ECO1 Demo expect this
+                // to be MoveCursor, it's really Dummy in the interpreter.
                 if (game.Id == "eco" && HasObject(game, 221, "demo"))
                 {
                     /*0x71*/ table.Add("MoveCursor");
@@ -943,11 +945,11 @@ namespace SCI.Resource
                     //
                     // ScummVM heuristic (but with a better explanation):
                     // Str:format calls kString (0x5c) in Late, not in middle.
-                    // Deliberate First() so we crash if there's no Str:format.
+                    // Str script does not exist in lighthouse non-interactive demo.
                     var strFormat = game.Scripts.Where(s => s.Number == 64918)
                                                 .SelectMany(s => s.Functions)
-                                                .First(f => f.FullName == "Str:format");
-                    if (!IsKernelFunctionCalled(strFormat, 0x5c))
+                                                .FirstOrDefault(f => f.FullName == "Str:format");
+                    if (strFormat == null || !IsKernelFunctionCalled(strFormat, 0x5c))
                     {
                         return Sci32Version.Sci21_Middle;
                     }

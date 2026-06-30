@@ -67,7 +67,7 @@ namespace SCI.Resource
         {
             if (!(0 <= start && start <= Length)) throw new ArgumentOutOfRangeException("start");
 
-            return new Span(array, this.start + start, Endian);
+            return new Span(array, this.start + start, length - start, Endian);
         }
 
         public Span Slice(int start, int length)
@@ -247,6 +247,46 @@ namespace SCI.Resource
                 s.Append((char)b);
             }
             return s.ToString();
+        }
+
+        public void CopyTo(Span destination, int destinationIndex, int length)
+        {
+            System.Array.Copy(
+                array,
+                start,
+                destination.array,
+                destination.start + destinationIndex,
+                length);
+        }
+
+        public void CopyTo(byte[] destination, int destinationIndex, int length)
+        {
+            System.Array.Copy(
+                array,
+                start,
+                destination,
+                destinationIndex,
+                length);
+        }
+
+        public void CopyTo(int sourceIndex, Span destination, int destinationIndex, int length)
+        {
+            System.Array.Copy(
+                array,
+                start + sourceIndex, 
+                destination.array,
+                destination.start + destinationIndex,
+                length);
+        }
+
+        public void CopyTo(int sourceIndex, byte[] destination, int destinationIndex, int length)
+        {
+            System.Array.Copy(
+                array,
+                start + sourceIndex,
+                destination,
+                destinationIndex,
+                length);
         }
 
         public IEnumerator<byte> GetEnumerator()

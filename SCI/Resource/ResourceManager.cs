@@ -68,54 +68,6 @@ using SCI.Resource.Decompressors;
 
 namespace SCI.Resource
 {
-    public enum ResourceType
-    {
-        View = 0,
-        Pic,
-        Script,
-        Text,
-        Sound,
-        Memory,
-        Vocab,
-        Font,
-        Cursor,
-        Patch,
-        Bitmap,
-        Palette,
-        CdAudio = 12,
-        Wave = 12,
-        Audio,
-        Sync,
-        Message,
-        Map,
-        Heap,
-        Audio36,
-        Sync36,
-        Translation,  // "currently unsupported" --scummvm
-
-        // SCI2.1+
-        Robot,
-        VMD,
-        Chunk,
-        Animation,
-
-        // SCI3
-        Etc,
-        Duck,
-        Clut,
-        TGA,
-        ZZZ
-    }
-
-    public enum ScriptFormat
-    {
-        Unknown,
-        SCI0,
-        SCI11,
-        SCI3,
-        LSCI
-    }
-
     public class ResourceId
     {
         public ResourceType Type { get; private set; }
@@ -162,8 +114,13 @@ namespace SCI.Resource
         List<ResourceVolume> volumes;
         List<MacResourceFork> macForks;
         List<PatchSource> patches;
+        List<Chunk> chunks;
+        Dictionary<ChunkEntry, VolumeSource> chunkResources;
 
-        CompressionFormat compressionFormat;
+        public CompressionFormat CompressionFormat { get; private set; }
+        public ResourceTypeVersion ResourceTypeVersion { get; private set; }
+        public PatchFileVersion PatchFileVersion { get; private set; }
+        public PatchFileNameFormat PatchFileNameFormat { get; set; } // used by WritePatchFile()
 
         const byte PatchVolumeNumber = 255;
 
@@ -177,6 +134,8 @@ namespace SCI.Resource
             volumes = new List<ResourceVolume>();
             macForks = new List<MacResourceFork>();
             patches = new List<PatchSource>();
+            chunks = new List<Chunk>();
+            chunkResources = new Dictionary<ChunkEntry, VolumeSource>();
 
             // try loading resources from map and volume files first.
             // if no maps are found then try mac volumes
@@ -187,10 +146,12 @@ namespace SCI.Resource
                 InitializeMacForks(files);
             }
 
-            // always apply patch files, even if there are no volumes
+            // always apply patch files, even if there are no volumes.
             // root directory has higher priority than patches directory.
             AddPatchFiles(Path.Combine(Directory, "patches"));
             AddPatchFiles(Directory);
+
+            AddChunks();
         }
 
         void InitializeMapsAndVolumes(FileInfo[] files)
@@ -266,11 +227,11 @@ namespace SCI.Resource
                 if (detectedMapVersion == MapVersion.SCI11 ||
                     detectedMapVersion == MapVersion.SCI2)
                 {
-                    compressionFormat = CompressionFormat.SCI1;
+                    CompressionFormat = CompressionFormat.SCI1;
                 }
                 else
                 {
-                    compressionFormat = DetectCompressionFormat();
+                    CompressionFormat = DetectCompressionFormat();
                 }
             }
             else if (Exists(files, "resmap.000") || Exists(files, "resmap.001"))
@@ -286,11 +247,11 @@ namespace SCI.Resource
                     }
                 }
 
-                // GK2 patches
+                // GK2, lighthouse, phant2 patches
                 AddMapAndVolume(files, "resmap.pat", "ressci.pat", PatchVolumeNumber, detectedMapVersion);
 
                 // setting for completeness but doesn't matter
-                compressionFormat = CompressionFormat.SCI1;
+                CompressionFormat = CompressionFormat.SCI1;
             }
 
             AddMapAndVolume(files, "message.map", "resource.msg", 0, detectedMapVersion);
@@ -298,8 +259,15 @@ namespace SCI.Resource
             // GK1 CD hi-res resources:
             AddMapAndVolume(files, "alt.map", "resource.alt", 0, detectedMapVersion);
 
-            // KQ7 / PQ4:
+            // KQ7:
             AddMapAndVolume(files, "altres.map", "altres.000", PatchVolumeNumber, detectedMapVersion);
+
+            // Detect which version of resource type numbers are used
+            // so that correct ids are created when adding resources.
+            if (volumes.Any())
+            {
+                ResourceTypeVersion = DetectResourceTypeVersionFromVolumes();
+            }
 
             // add resources from volumes in order of priority, from most important to least:
             // - patch volume    255
@@ -334,7 +302,8 @@ namespace SCI.Resource
                 {
                     // only add a resource if it hasn't already been added
                     var entry = volume.Entries[e];
-                    var id = new ResourceId(ToResourceType(entry.Type), entry.Number);
+                    var type = ResourceTypeMap.GetType(entry.Type, ResourceTypeVersion);
+                    var id = new ResourceId(type, entry.Number);
                     if (!resources.ContainsKey(id))
                     {
                         if (entry.DataOffset + entry.PackedSize > volume.Span.Length)
@@ -345,13 +314,30 @@ namespace SCI.Resource
                             continue;
                         }
 
-                        var compression = GetCompression(entry.Compression);
+                        Compression compression;
+                        if (volume.Version == VolumeVersion.SCI3)
+                        {
+                            // SCI3 ignores compression field, compares sizes instead
+                            compression = (entry.PackedSize == entry.UnpackedSize) ?
+                                          Compression.None :
+                                          Compression.StackerLzs;
+                        }
+                        else
+                        {
+                            compression = GetCompression(entry.Compression);
+                        }
                         var compressed = volume.Span.Slice(entry.DataOffset, (int)entry.PackedSize);
                         var source = new VolumeSource(volume.Name, compression, compressed, entry.UnpackedSize);
                         resources.Add(id, source);
                     }
                 }
             }
+
+            // Detect the patch file version
+            PatchFileVersion = DetectPatchFileVersionFromVolumes();
+
+            // Detect the patch file name format
+            PatchFileNameFormat = DetectPatchFileNameFormatFromVolumes();
         }
 
         void InitializeMacForks(FileInfo[] files)
@@ -383,7 +369,7 @@ namespace SCI.Resource
                 { "CURS", ResourceType.Cursor },
                 { "crsr", ResourceType.Cursor },
                 { "Pat ", ResourceType.Patch },
-                { "snd ", ResourceType.Sound },
+                { "snd ", ResourceType.Audio },
                 { "MSG ", ResourceType.Message },
                 { "HEP ", ResourceType.Heap },
                 // IBIN, MacIconBarPictN
@@ -412,6 +398,7 @@ namespace SCI.Resource
             }
             if (!detectionSucceeded) throw new Exception("Unable to detect Mac compression");
 
+            int resourceCountBeforeMacForks = resources.Count;
             foreach (var fork in macForks)
             {
                 foreach (var type in fork.Types)
@@ -438,6 +425,18 @@ namespace SCI.Resource
                     }
                 }
             }
+
+            // Detect the resource type version
+            if (resources.Count > resourceCountBeforeMacForks)
+            {
+                ResourceTypeVersion = DetectResourceTypeVersionFromMacForks();
+            }
+
+            // Detect the patch file version
+            PatchFileVersion = DetectPatchFileVersionFromMacForks();
+
+            // Mac always uses the same patch name format
+            PatchFileNameFormat = PatchFileNameFormat.SCI1;
         }
 
         public bool Has(ResourceType type)
@@ -485,18 +484,45 @@ namespace SCI.Resource
             return resources;
         }
 
+        public MapVersion MapVersion
+        {
+            get { return maps.FirstOrDefault()?.Version ?? MapVersion.Unknown; }
+        }
+
+        public VolumeVersion VolumeVersion
+        {
+            get { return volumes.FirstOrDefault()?.Version ?? VolumeVersion.Unknown; }
+        }
+
         void AddPatchFiles(string directory)
         {
             if (!System.IO.Directory.Exists(directory)) return;
 
+            // Accept all patch files, regardless of their name format.
+            // If we don't already know the name format, record what we see.
+            bool isNameFormatKnown = (PatchFileNameFormat != PatchFileNameFormat.Unknown);
             foreach (var file in System.IO.Directory.GetFiles(directory))
             {
-                ResourceId id = PatchFileNames.Parse(file);
+                PatchFileNameFormat parseFormat;
+                ResourceId id = PatchFileNames.Parse(file, out parseFormat);
                 if (id != null)
                 {
-                    var source = new PatchSource(id, file);
+                    var source = new PatchSource(id, file, PatchFileVersion);
                     patches.Add(source);
                     resources[id] = source;
+
+                    if (!isNameFormatKnown)
+                    {
+                        if (PatchFileNameFormat == PatchFileNameFormat.Unknown)
+                        {
+                            PatchFileNameFormat = parseFormat;
+                        }
+                        else if (parseFormat == PatchFileNameFormat.SCI3)
+                        {
+                            // a .csc file was found, upgrade to sci3
+                            PatchFileNameFormat = parseFormat;
+                        }
+                    }
                 }
             }
         }
@@ -585,7 +611,7 @@ namespace SCI.Resource
             // used the same heuristic originally.)
             foreach (var entry in volumes.SelectMany(v => v.Entries))
             {
-                if (ToResourceType(entry.Type) == ResourceType.Pic)
+                if (entry.Type == 1) // Pic is 1 in all SCI versions
                 {
                     if (entry.Compression == 1)
                     {
@@ -615,10 +641,10 @@ namespace SCI.Resource
             switch (compression)
             {
                 case 0: return Compression.None;
-                case 1: return (compressionFormat == CompressionFormat.SCI0) ?
+                case 1: return (CompressionFormat == CompressionFormat.SCI0) ?
                                Compression.Lzw0 :
                                Compression.Huffman;
-                case 2: return (compressionFormat == CompressionFormat.SCI0) ?
+                case 2: return (CompressionFormat == CompressionFormat.SCI0) ?
                                Compression.Huffman :
                                Compression.Lzw1;
                 case 3: return Compression.Lzw1View;
@@ -630,11 +656,6 @@ namespace SCI.Resource
                 case 32: return Compression.StackerLzs;
                 default: throw new Exception("Unknown compression: " + compression);
             }
-        }
-
-        static ResourceType ToResourceType(byte b)
-        {
-            return (ResourceType)(b & 0x7f);
         }
 
         Span MergeFiles(List<FileInfo> files)
@@ -652,6 +673,190 @@ namespace SCI.Resource
             }
             return new Span(buffer);
         }
+
+        ResourceTypeVersion DetectResourceTypeVersionFromVolumes()
+        {
+            // Some of the resource type numbers changed in SCI21, although most
+            // stayed the same. A few of the SCI21 games kept the old numbers.
+            if (MapVersion <= MapVersion.SCI11)
+            {
+                // All games with map version SCI11 or lower use the old numbers.
+                // This handles gk1, qfg4-floppy, and pq4-floppy as they used
+                // the earlier SCI1_Late map version.
+                return ResourceTypeVersion.SCI0;
+            }
+            else if (VolumeVersion == VolumeVersion.SCI3)
+            {
+                // SCI3 games use new numbers. This handles lsl7, phant2, rama.
+                return ResourceTypeVersion.SCI21;
+            }
+            else
+            {
+                // SCI21 games use the new numbers, except for:
+                // lsl6hires, qfg4-cd, and pq4-cd. TODO: handle these
+                return ResourceTypeVersion.SCI21;
+            }
+        }
+
+        ResourceTypeVersion DetectResourceTypeVersionFromMacForks()
+        {
+            if (!Has(new ResourceId(ResourceType.Script, 64999)))
+            {
+                return ResourceTypeVersion.SCI0;
+            }
+            else
+            {
+                // SCI32 mac games use the new numbers, except for:
+                // lsl6hires, gk1, pq4. TODO: handle these
+                return ResourceTypeVersion.SCI21;
+            }
+        }
+
+        PatchFileVersion DetectPatchFileVersionFromVolumes()
+        {
+            switch (VolumeVersion)
+            {
+                case VolumeVersion.SCI0:
+                case VolumeVersion.SCI1_Late:
+                    return PatchFileVersion.SCI0;
+                case VolumeVersion.SCI11:
+                    return PatchFileVersion.SCI11;
+                case VolumeVersion.SCI2:
+                case VolumeVersion.SCI3:
+                    return PatchFileVersion.SCI2;
+            }
+            return PatchFileVersion.Unknown;
+        }
+
+        PatchFileVersion DetectPatchFileVersionFromMacForks()
+        {
+            if (!Has(new ResourceId(ResourceType.Script, 64999)))
+            {
+                return PatchFileVersion.SCI11;
+            }
+            else
+            {
+                return PatchFileVersion.SCI2;
+            }
+        }
+
+        PatchFileNameFormat DetectPatchFileNameFormatFromVolumes()
+        {
+            switch (VolumeVersion)
+            {
+                case VolumeVersion.SCI0:
+                    // The SCI1 names were introduced in January 1991,
+                    // when SCI0 maps and volumes were still in use.
+                    // The best we can do here is check for heaps.
+                    if (Has(ResourceType.Heap))
+                    {
+                        return PatchFileNameFormat.SCI1;
+                    }
+                    else
+                    {
+                        return PatchFileNameFormat.Unknown;
+                    }
+                case VolumeVersion.SCI1_Late:
+                case VolumeVersion.SCI11:
+                    return PatchFileNameFormat.SCI1;
+                case VolumeVersion.SCI2:
+                    if (Has(ResourceType.Heap))
+                    {
+                        return PatchFileNameFormat.SCI1;
+                    }
+                    else
+                    {
+                        return PatchFileNameFormat.SCI3; // lighthouse
+                    }
+                case VolumeVersion.SCI3:
+                    return PatchFileNameFormat.SCI3;
+            }
+            return PatchFileNameFormat.Unknown;
+        }
+
+        void AddChunks()
+        {
+            // parse every chunk resource and create a VolumeSource for each entry
+            var version = ChunkVersion.Unknown;
+            foreach (var chunkId in GetResources(ResourceType.Chunk))
+            {
+                Chunk chunk = Chunk.Read(chunkId.Number, GetResource(chunkId), version);
+                chunks.Add(chunk);
+                version = chunk.Verison; // re-use detection result on all
+
+                string name = PatchFileNames.GetName(chunkId, PatchFileNameFormat.SCI1);
+                foreach (ChunkEntry entry in chunk.Entries)
+                {
+                    // Resources in chunks can be compressed in SCI3.
+                    // SCI3 ignores compression field, compares sizes instead.
+                    var compression = (entry.PackedSize == entry.UnpackedSize) ?
+                                      Compression.None :
+                                      Compression.StackerLzs;
+                    var data = chunk.Span.Slice(entry.DataOffset, entry.PackedSize);
+                    var source = new VolumeSource(name, compression, data, (UInt32)entry.UnpackedSize);
+                    chunkResources.Add(entry, source);
+                }
+            }
+
+            if (!Has(ResourceType.Script))
+            {
+                AddResourcesFromChunk(0);
+            }
+        }
+
+        void AddResourcesFromChunk(UInt16 chunkNumber)
+        {
+            var chunk = chunks.FirstOrDefault(c => c.Number == chunkNumber);
+            if (chunk != null)
+            {
+                foreach (ChunkEntry entry in chunk.Entries)
+                {
+                    resources[entry.Id] = chunkResources[entry];
+                }
+            }
+        }
+
+        public IEnumerable<ResourceId> GetResourcesInChunk(UInt16 chunkNumber)
+        {
+            var chunk = chunks.FirstOrDefault(c => c.Number == chunkNumber);
+            if (chunk != null)
+            {
+                return chunk.Entries.Select(e => e.Id);
+            }
+            return null;
+        }
+
+        public Span GetResourceInChunk(UInt16 chunkNumber, ResourceId id)
+        {
+            var chunk = chunks.FirstOrDefault(c => c.Number == chunkNumber);
+            if (chunk != null)
+            {
+                var chunkEntry = chunk.Entries.FirstOrDefault(e => e.Id == id);
+                if (chunkEntry != null)
+                {
+                    var chunkResource = chunkResources[chunkEntry];
+                    return chunkResource.GetData();
+                }
+            }
+            return null;
+        }
+
+        public void WritePatchFile(ResourceId id, string directory)
+        {
+            Span resource = GetResource(id);
+            WritePatchFile(id, resource, directory);
+        }
+
+        public void WritePatchFile(ResourceId id, Span resource, string directory)
+        {
+            string fileName = Path.Combine(directory, PatchFileNames.GetName(id, PatchFileNameFormat));
+            PatchFile.Write(fileName, resource, id.Type, PatchFileVersion, ResourceTypeVersion);
+        }
+
+        public override string ToString()
+        {
+            return Name;
+        }
     }
 
     public abstract class Source
@@ -661,15 +866,15 @@ namespace SCI.Resource
 
     public class VolumeSource : Source
     {
-        public string Name { get; private set; }
+        public string VolumeName { get; private set; }
         public Compression Compression { get; private set; }
         public Span Packed { get; private set; }
         public Span Unpacked { get; private set; }
         public UInt32 UnpackedSize { get; private set; }
 
-        public VolumeSource(string name, Compression compression, Span packed, UInt32 unpackedSize)
+        public VolumeSource(string volumeName, Compression compression, Span packed, UInt32 unpackedSize)
         {
-            Name = name;
+            VolumeName = volumeName;
             this.Packed = packed;
             Compression = compression;
             this.UnpackedSize = unpackedSize;
@@ -693,7 +898,7 @@ namespace SCI.Resource
 
         public override string ToString()
         {
-            return Name;
+            return VolumeName;
         }
     }
 
@@ -702,12 +907,14 @@ namespace SCI.Resource
         public string Name { get; private set; }
         public ResourceId Id { get; private set; }
         public string FileName { get; private set; }
+        public PatchFileVersion Version { get; private set; }
         public Span Span { get; private set; }
 
-        public PatchSource(ResourceId id, string fileName)
+        public PatchSource(ResourceId id, string fileName, PatchFileVersion version)
         {
             Id = id;
             FileName = fileName;
+            Version = version;
             Name = Path.GetFileName(fileName);
         }
 
@@ -715,15 +922,7 @@ namespace SCI.Resource
         {
             if (Span == null)
             {
-                byte[] buffer = File.ReadAllBytes(FileName);
-
-                // Patch files have two byte headers where the first byte has
-                // the resource type. flag $80 is set in later versions.
-                // The second byte is zero, except in LSCI where it's the length
-                // of the original filename that follows it.
-                // TSN\Clubhouse 50.SO header: 82 09 tsnmap.sc
-                int patchHeaderLength = 2 + buffer[1];
-                Span = new Span(buffer, patchHeaderLength); // skip patch header
+                Span = PatchFile.Read(FileName, Id.Type, Version);
             }
             return Span;
         }

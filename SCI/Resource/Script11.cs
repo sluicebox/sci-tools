@@ -277,7 +277,7 @@ namespace SCI.Resource
             //
 
             // figure out string properties now that we've parsed everything.
-            // unlike SCI0, there are no junk byte in between strings. yay!
+            // unlike SCI0, there are no junk bytes in between strings. yay!
             // that means it's okay to simply parse the strings as null separated
             // and expect all valid references to point to the start of a
             // parsed string.

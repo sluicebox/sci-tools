@@ -34,7 +34,7 @@ namespace SCI.Resource
             { "sync", ResourceType.Sync },
             { "message", ResourceType.Message },
             { "map", ResourceType.Map },
-            { "heap", ResourceType.Heap },
+            { "heap", ResourceType.Heap }, // pretty sure i made this up
         };
 
         public static IReadOnlyDictionary<string, ResourceType> Suffixes = new Dictionary<string, ResourceType>
@@ -59,10 +59,18 @@ namespace SCI.Resource
             { "msg", ResourceType.Message },
             { "map", ResourceType.Map },
             { "hep", ResourceType.Heap },
+            { "chk", ResourceType.Chunk },
         };
 
         public static ResourceId Parse(string fileName)
         {
+            PatchFileNameFormat format;
+            return Parse(fileName, out format);
+        }
+
+        public static ResourceId Parse(string fileName, out PatchFileNameFormat format)
+        {
+            format = PatchFileNameFormat.Unknown;
             fileName = Path.GetFileName(fileName);
             int extensionPos = fileName.LastIndexOf('.');
             if (extensionPos == -1) return null;
@@ -71,9 +79,21 @@ namespace SCI.Resource
             string suffix = fileName.Substring(extensionPos + 1).ToLower();
             ResourceType type;
             UInt16 number;
-            if ((Names.TryGetValue(prefix, out type) && UInt16.TryParse(suffix, out number)) ||
-                (Suffixes.TryGetValue(suffix, out type) && UInt16.TryParse(prefix, out number)))
+            if (Names.TryGetValue(prefix, out type) && UInt16.TryParse(suffix, out number))
             {
+                format = PatchFileNameFormat.SCI0;
+                return new ResourceId(type, number);
+            }
+            if (Suffixes.TryGetValue(suffix, out type) && UInt16.TryParse(prefix, out number))
+            {
+                if (suffix == "csc")
+                {
+                    format = PatchFileNameFormat.SCI3;
+                }
+                else
+                {
+                    format = PatchFileNameFormat.SCI1;
+                }
                 return new ResourceId(type, number);
             }
             return null;
@@ -91,11 +111,11 @@ namespace SCI.Resource
             {
                 if (format == PatchFileNameFormat.SCI1)
                 {
-                    suffix = ".scr";
+                    suffix = "scr";
                 }
                 else
                 {
-                    suffix = ".csc";
+                    suffix = "csc";
                 }
             }
             return string.Format("{0}.{1}", id.Number, suffix);

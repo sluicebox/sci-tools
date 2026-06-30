@@ -85,7 +85,7 @@ namespace SCI.Resource
 
     public class Opcode
     {
-        static Dictionary<ByteCodeVersion, IReadOnlyList<Opcode>> opcodeSets = new Dictionary<ByteCodeVersion, IReadOnlyList<Opcode>>(3);
+        static Dictionary<ByteCodeVersion, IReadOnlyList<Opcode>> opcodeSets = new Dictionary<ByteCodeVersion, IReadOnlyList<Opcode>>(4);
 
         static Opcode()
         {
